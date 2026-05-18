@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -285,6 +286,13 @@ namespace FServer
         // XỬ LÝ CLIENT
         // ========================================================
 
+        private Dictionary<string, string> accounts = new Dictionary<string, string>
+            {
+                { "user1", "123456" },
+                { "admin", "admin123" }
+            };
+
+        private string pendingUser = ""; // lưu username tạm
         private void HandleClient(TcpClient client, string clientIP)
         {
             try
@@ -299,6 +307,9 @@ namespace FServer
 
                 // Gửi thông báo chào
                 writer.WriteLine("220 Welcome FTP Server");
+
+                bool isLoggedIn = false;     // kiểm tra client đã đăng nhập chưa
+                string pendingUser = "";     // lưu username tạm sau lệnh USER
 
                 while (true)
                 {
@@ -333,21 +344,73 @@ namespace FServer
 
                     if (command == "USER")
                     {
-                        writer.WriteLine("331 Nhập password");
-                    }
+                        pendingUser = request.Substring(5).Trim();
 
-                    // =================================================
-                    // PASS
-                    // =================================================
+                        if (pendingUser == "")
+                        {
+                            writer.WriteLine("501 Chưa nhập username");
+                        }
+                        else
+                        {
+                            writer.WriteLine("331 Nhập password");
+                        }
+                    }
 
                     else if (command == "PASS")
                     {
-                        writer.WriteLine("230 Đăng nhập thành công");
+                        string passwordHashFromClient = request.Substring(5).Trim();
+
+                        if (accounts.ContainsKey(pendingUser))
+                        {
+                            string realPassword = accounts[pendingUser];
+
+                            string hashInServer = HashPassword(realPassword);
+
+                            if (hashInServer == passwordHashFromClient)
+                            {
+                                writer.WriteLine("230 Đăng nhập thành công");
+                                isLoggedIn = true;
+
+                                Log(clientIP + " đăng nhập thành công với user: " + pendingUser);
+                            }
+                            else
+                            {
+                                writer.WriteLine("530 Sai tài khoản hoặc mật khẩu");
+                                pendingUser = "";
+                                isLoggedIn = false;
+
+                                Log(clientIP + " đăng nhập thất bại");
+                            }
+                        }
+                        else
+                        {
+                            writer.WriteLine("530 Sai tài khoản hoặc mật khẩu");
+                            pendingUser = "";
+                            isLoggedIn = false;
+
+                            Log(clientIP + " đăng nhập thất bại");
+                        }
                     }
 
-                    // =================================================
-                    // LIST
-                    // =================================================
+
+                    else if (request.ToUpper() == "LOGOUT")
+                    {
+                        if (isLoggedIn == true)
+                        {
+                            writer.WriteLine("231 Đăng xuất thành công");
+
+                            Log(clientIP + " đã đăng xuất user: " + pendingUser);
+
+                            isLoggedIn = false;
+                            pendingUser = "";
+                        }
+                    }
+
+                    else if (isLoggedIn == false)
+                    {
+                        writer.WriteLine("530 Bạn cần đăng nhập trước");
+                    }
+
 
                     else if (command == "LIST")
                     {
@@ -366,6 +429,7 @@ namespace FServer
                         writer.WriteLine("226 Hoàn tất");
                     }
 
+                   
                     // =================================================
                     // MKD - TẠO THƯ MỤC
                     // =================================================
@@ -505,6 +569,24 @@ namespace FServer
             else
             {
                 txtLog.AppendText(text + Environment.NewLine);
+            }
+        }
+
+        private string HashPassword(string password)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] bytes = Encoding.UTF8.GetBytes(password);
+                byte[] hashBytes = sha.ComputeHash(bytes);
+
+                StringBuilder sb = new StringBuilder();
+
+                foreach (byte b in hashBytes)
+                {
+                    sb.Append(b.ToString("x2"));
+                }
+
+                return sb.ToString();
             }
         }
     }
